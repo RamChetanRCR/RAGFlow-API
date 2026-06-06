@@ -9,7 +9,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.models import QueryRequest, QueryResponse, IngestResponse, DocInfo, HealthResponse
-from app.middleware.auth import APIKeyMiddleware
 from app.pipeline.graph import rag_graph
 from app.pipeline.nodes import answer_generator
 from app.services.ingestor import Ingestor
@@ -35,7 +34,6 @@ app = FastAPI(
 )
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-app.add_middleware(APIKeyMiddleware)
 
 
 @app.get("/health", response_model=HealthResponse)

@@ -11,9 +11,7 @@ export default function Home() {
     { role: "assistant", content: "Ask me anything about your documents." },
   ]);
   const [loading, setLoading] = useState(false);
-  const [apiKey, setApiKey] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
-  const eventRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -27,13 +25,10 @@ export default function Home() {
     setMessages((prev) => [...prev, userMsg]);
     setLoading(true);
 
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (apiKey) headers["X-API-Key"] = apiKey;
-
     try {
       const res = await fetch("/api/query", {
         method: "POST",
-        headers,
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query, stream: false }),
       });
       const data = await res.json();
@@ -62,13 +57,9 @@ export default function Home() {
     const formData = new FormData();
     formData.append("file", fileInput.files[0]);
 
-    const headers: Record<string, string> = {};
-    if (apiKey) headers["X-API-Key"] = apiKey;
-
     try {
       const res = await fetch("/api/ingest", {
         method: "POST",
-        headers,
         body: formData,
       });
       const data = await res.json();
@@ -94,16 +85,6 @@ export default function Home() {
       <h1 style={{ borderBottom: "2px solid #333", paddingBottom: 10 }}>
         RAGFlow Chat
       </h1>
-
-      <div style={{ marginBottom: 16 }}>
-        <input
-          type="password"
-          placeholder="X-API-Key (optional for local)"
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          style={{ width: "100%", padding: 8, fontSize: 14 }}
-        />
-      </div>
 
       <form onSubmit={handleUpload} style={{ marginBottom: 16 }}>
         <input type="file" accept=".pdf" style={{ marginRight: 8 }} />
