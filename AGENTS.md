@@ -1,16 +1,29 @@
 # RAGFlow — Multi-Agent RAG Pipeline
 
-A production-grade, multi-agent RAG (Retrieval-Augmented Generation) pipeline built as a FastAPI microservice. Ingests PDF documents and answers natural-language queries with cited, grounded responses using a LangGraph-based multi-agent pipeline — all under 2 seconds.
+A production-grade multi-agent RAG pipeline built as a FastAPI microservice. Ingests PDF documents and answers natural-language queries with cited, grounded responses using a LangGraph StateGraph with **4 autonomous agents**.
 
-## Architecture
+## Architecture (Multi-Agent)
 
 ```
 User Query
     │
     ▼
-┌─────────────────┐
-│  Query Rewriter  │  Resolves pronouns/ambiguity via LLM
-└────────┬────────┘
+┌─────────────────────────┐
+│  Agent 1: Guardrails    │  LLM decides: document-related? → pass/reject
+└────────┬────────────────┘
+         │
+    ┌────┴────┐
+    ▼         ▼
+ Rewrite    Reject Query
+    │      (off-topic → END)
+    ▼
+┌─────────────────────────┐
+│  Agent 2: Query Rewriter│  LLM rewrites for precision
+└────────┬────────────────┘
+         ▼
+┌──────────────────────────────┐
+│  Agent 3: Retrieval Strategist│  LLM picks strategy: semantic | doc_specific
+└────────┬─────────────────────┘
          ▼
 ┌─────────────────┐
 │    Retriever     │  Qdrant semantic search (top-20)
@@ -25,127 +38,100 @@ User Query
  Generate  No Context
     │      Fallback
     ▼         │
-┌─────────┐   │
-│Citation │   │
-│Formatter│   │
-└────┬────┘   │
-     ▼        ▼
-   Answer + Citations
+┌─────────────────────────┐
+│  Agent 4: Quality Review│  LLM scores 1-10, checks citations, hallucination
+└────────┬────────────────┘
+         │
+    ┌────┴────┐
+    ▼         ▼
+ Format    Regenerate
+ (cite)   (loop back to Generate, max 3)
+    │
+    ▼
+ Answer + Citations
 ```
+
+## Agents
+
+| Agent | Decision | Tools |
+|-------|----------|-------|
+| **Guardrails Agent** | Is query document-related? | LLM classification |
+| **Query Rewriter** | Resolve pronouns/ambiguity | LLM rewrite |
+| **Retrieval Strategist** | Which strategy/doc filter? | LLM strategy pick |
+| **Quality Reviewer Agent** | Pass quality gate? Regenerate? | LLM scoring (1-10) |
+
+## Conditional Loops
+- **Guardrails**: Off-topic → early reject ("I can only answer...")
+- **Reranker → Generate/Fallback**: relevance < 0.3 → no_context_fallback
+- **Quality Review → Regenerate**: score < 6 & retries < 3 → loop back to answer_generation
 
 ## Tech Stack
 
 | Layer | Choice |
 |-------|--------|
 | Language | Python 3.11+ |
-| Agent Framework | LangGraph (StateGraph with conditional edges) |
-| LLM | Gemini 1.5 Flash (via google-genai SDK) |
-| Embeddings | text-embedding-004 (Gemini) |
-| Vector DB | Qdrant (self-hosted Docker) |
+| Agent Framework | **LangGraph** (StateGraph with conditional edges & loops) |
+| LLM | Ollama (`llama3.2:3b` via OpenAI-compatible API) |
+| Embeddings | Ollama (`nomic-embed-text`, 768d) |
+| Vector DB | Qdrant (`:memory:` mode, shared singleton) |
 | Reranking | Cohere Rerank (free tier) |
 | API | FastAPI + Uvicorn |
 | PDF Parsing | PyMuPDF (fitz) |
-| Auth | API Key middleware (X-API-Key header) |
 | Streaming | SSE (Server-Sent Events) |
 | Testing | pytest + httpx async client |
-| Container | Docker + docker-compose |
 | Config | Pydantic Settings v2 |
+
+## Key Design Decisions
+
+1. **Multi-Agent (not multi-node)**: Each agent makes LLM-based decisions — Guardrails classifies, Strategist picks strategy, Quality Reviewer scores and gates. This is genuinely multi-agent: agents have reasoning + decision-making loops.
+
+2. **Quality Review Loop**: The Quality Reviewer scores answers 1-10. Below 6 triggers regeneration (up to 3 retries). This prevents hallucination and low-quality output.
+
+3. **Guardrails Gate**: Off-topic queries (greetings, unrelated) are rejected before they reach the pipeline, saving LLM calls and preventing irrelevant responses.
+
+4. **Ollama local**: `llama3.2:3b` for LLM, `nomic-embed-text` for embeddings. Swapped from Gemini due to free-tier rate limits.
+
+5. **Qdrant `:memory:`**: No Docker needed for vector store. Shared singleton means Ingestor and Retriever use same instance.
+
+6. **Conditional edges**: Relevance < 0.3 → no_context_fallback instead of hallucinating. Quality < 6 → regenerate loop.
+
+## Multi-Agent vs Multi-Node
+
+Each agent above is a genuine agent because:
+- It makes an **LLM-based decision** (not a deterministic computation)
+- It has **autonomy** (e.g., Quality Reviewer can trigger regeneration)
+- The graph has **conditional loops** based on agent decisions
+- Each agent has its own **prompt + reasoning** tailored to its role
+
+## Quick Start
+
+```bash
+cd ragflow-api
+uvicorn app.main:app --port 8000 --reload
+```
 
 ## Project Structure
 
 ```
 ragflow-api/
 ├── app/
-│   ├── main.py              # FastAPI app, lifespan, routers
+│   ├── main.py              # FastAPI app, endpoints
 │   ├── config.py            # Pydantic Settings (env-based)
-│   ├── models.py            # Pydantic request/response schemas
+│   ├── models.py            # Pydantic schemas
 │   ├── pipeline/
-│   │   ├── graph.py         # LangGraph StateGraph definition
-│   │   ├── nodes.py         # All 5 node functions
+│   │   ├── graph.py         # LangGraph StateGraph (4 agents, conditional edges)
+│   │   ├── nodes.py         # Agent functions + pipeline nodes
 │   │   └── state.py         # RAGState TypedDict
 │   ├── services/
-│   │   ├── ingestor.py      # PDF parsing → chunking → embed → upsert
-│   │   ├── retriever.py     # Qdrant search wrapper
-│   │   └── reranker.py      # Cohere rerank wrapper
+│   │   ├── ingestor.py      # PDF → chunk → embed → Qdrant
+│   │   ├── retriever.py     # Qdrant query_points wrapper
+│   │   ├── reranker.py      # Cohere rerank wrapper
+│   │   └── qdrant.py        # Shared Qdrant singleton
 │   └── middleware/
-│       └── auth.py          # API key validation middleware
+│       └── auth.py          # (removed for local dev)
 ├── tests/
 │   ├── test_ingest.py
 │   └── test_query.py
 ├── frontend/                # Next.js chat UI
-├── docker-compose.yml       # Qdrant + API
-├── Dockerfile
-├── requirements.txt
-├── .env.example
-└── AGENTS.md
+└── requirements.txt
 ```
-
-## API Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | API version, Qdrant status, LLM check |
-| POST | `/ingest` | Upload PDF → parse → chunk → embed → store |
-| POST | `/query` | Full pipeline: rewrite → retrieve → rerank → generate → cite |
-| GET | `/query/stream` | SSE streaming version of POST /query |
-| GET | `/docs` | List all ingested documents |
-| GET | `/docs/{doc_id}` | Get document metadata |
-| DELETE | `/docs/{doc_id}` | Remove document + vectors |
-
-## Quick Start
-
-```bash
-# 1. Clone and enter project
-cd ragflow-api
-
-# 2. Copy env and fill in keys
-cp .env.example .env
-# Edit .env with your GEMINI_API_KEY, COHERE_API_KEY, API_KEY
-
-# 3. Start Qdrant + API
-docker-compose up --build
-
-# 4. Ingest a PDF
-curl -X POST http://localhost:8000/ingest \
-  -H "X-API-Key: your-key" \
-  -F "file=@document.pdf"
-
-# 5. Ask a question
-curl -X POST http://localhost:8000/query \
-  -H "X-API-Key: your-key" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "What is this document about?"}'
-
-# 6. Open frontend
-cd frontend && npm ci && npm run dev
-```
-
-## Key Design Decisions
-
-1. **LangGraph over raw LangChain agents**: Gives full control over the pipeline topology with conditional edges (e.g., no-context fallback prevents hallucination).
-
-2. **Cohere Rerank is critical**: Raw cosine similarity from vector search is noisy. Cohere reranking improves NDCG@5 by ~30-40% — this is the single biggest quality lever.
-
-3. **Conditional edge for hallucination guard**: If reranker scores are all < 0.3, the pipeline returns "I don't know" instead of fabricating.
-
-4. **Gemini text-embedding-004 for embeddings**: Matches the LLM provider, reducing API surface. Uses OpenAI-compatible endpoint for easy swap.
-
-5. **SSE streaming**: Token-by-token output via Server-Sent Events for responsive UX, matching the pattern used in chat-langchain.
-
-6. **chunking strategy**: Paragraph-boundary-first then token-limit (512 tokens, 50 overlap). Section headers extracted from PyMuPDF bold/large text detection.
-
-## Build Notes
-
-- Built from scratch based on the checkFile.md spec and patterns from langchain-ai/chat-langchain
-- The embedding dimension is set to 768 (Gemini text-embedding-004). Adjust if swapping providers.
-- Qdrant collection is auto-created on first ingest if it doesn't exist.
-- The frontend proxies API calls through Next.js rewrites to avoid CORS in dev.
-- For production, add rate limiting, proper secret management, and OpenTelemetry tracing.
-
-## Stretch Features (Not Yet Implemented)
-
-- Multi-document cross-referencing queries
-- `/eval` endpoint with RAGAS metrics (faithfulness, relevancy)
-- Redis caching for embeddings/query results
-- OpenTelemetry tracing across pipeline nodes
-- Rate limiting middleware

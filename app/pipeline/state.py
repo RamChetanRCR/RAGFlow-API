@@ -11,3 +11,9 @@ class RAGState(TypedDict):
     citations: list[Citation]
     should_retrieve: bool
     doc_id: str
+    guardrails_passed: bool
+    guardrails_reason: str
+    retrieval_strategy: str
+    quality_score: int
+    quality_passed: bool
+    max_retries: int

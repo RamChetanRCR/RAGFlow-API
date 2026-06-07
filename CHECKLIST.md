@@ -1,6 +1,6 @@
 # RAGFlow API — Project Specification & Build Status
 
-A production-grade, multi-agent RAG pipeline built as a FastAPI microservice. Intelligent Q&A over PDF/document corpora with cited, grounded responses using a LangGraph multi-agent pipeline.
+A production-grade multi-agent RAG pipeline built as a FastAPI microservice. Intelligent Q&A over PDF/document corpora with cited, grounded responses using a LangGraph StateGraph with **4 autonomous agents** (Guardrails, Query Rewriter, Retrieval Strategist, Quality Reviewer).
 
 ---
 
@@ -21,7 +21,7 @@ A production-grade, multi-agent RAG pipeline built as a FastAPI microservice. In
 | Layer | Original Spec | ✅ Actually Built |
 |-------|--------------|-------------------|
 | Language | Python 3.11+ | ✅ Python 3.11+ |
-| Agent Framework | LangGraph | ✅ LangGraph StateGraph with conditional edges |
+| Pipeline Framework | LangGraph | ✅ LangGraph StateGraph with **4 autonomous agents** + conditional edges + quality loop |
 | LLM | Gemini 1.5 Flash | ✅ **Ollama** (llama3.2:3b) — swappable to Gemini/OpenAI via .env |
 | Embeddings | text-embedding-004 | ✅ **Ollama nomic-embed-text** (768d) — swappable to Gemini |
 | Vector DB | Qdrant (Docker) | ✅ **In-memory** (`:memory:`) by default, Docker optional |
@@ -51,27 +51,58 @@ class RAGState(TypedDict):
     citations: list[Citation]     # source doc + page references
     should_retrieve: bool         # conditional edge flag
     doc_id: str                   # optional document filter
+    guardrails_passed: bool       # guardrails agent decision
+    guardrails_reason: str        # why query passed/rejected
+    retrieval_strategy: str       # semantic | document_specific
+    quality_score: int            # quality review score (1-10)
+    quality_passed: bool          # quality gate passed?
+    max_retries: int              # regeneration counter
 ```
+
+### Agents
+
+| Agent | Role | LLM Decision | Conditional Edge |
+|-------|------|-------------|------------------|
+| 1. **Guardrails** | Classifies query as on-topic / off-topic | `{"passed": bool, "reason": str}` | passed → rewrite, rejected → early exit |
+| 2. **Query Rewriter** | Resolves pronouns/ambiguity | Rewritten text | → Retrieval Strategist |
+| 3. **Retrieval Strategist** | Picks strategy + optional doc filter | `{"strategy": str, "doc_id": str}` | → Retriever |
+| 4. **Quality Reviewer** | Scores answer 1-10, checks citations, detects hallucination | `{"score": int, "passed": bool}` | passed → format, failed → regenerate (max 3) |
 
 ### Pipeline Nodes
 
 | Node | Responsibility | Status |
 |------|---------------|--------|
+| 0. guardrails_agent | LLM decides if query is document-related | ✅ |
+| 0a. reject_query | Returns policy message for off-topic | ✅ |
 | 1. query_rewriter | Rewrites ambiguous queries using LLM | ✅ |
+| 1a. retrieval_strategist | LLM picks retrieval strategy | ✅ |
 | 2. retriever | Qdrant semantic search (top-k=20) with metadata filter | ✅ |
 | 3. reranker | Cohere Rerank top-20→top-5 (falls back to cosine) | ✅ |
 | 4. answer_generation | LLM generates grounded answer with inline citations | ✅ |
-| 5. citation_formatter | Parses `[doc_name, p.N]` citations from output | ✅ |
-| 6. no_context_fallback | Returns "I don't know" when relevance < 0.3 | ✅ |
+| 5. quality_reviewer_agent | LLM scores answer, gates quality | ✅ |
+| 6. citation_formatter | Parses `[doc_name, p.N]` citations from output | ✅ |
+| 7. no_context_fallback | Returns "I don't know" when relevance < 0.3 | ✅ |
 
 ### Graph Flow
 
 ```
-query_rewriter → retriever → reranker → [conditional] → answer_generation → citation_formatter → END
-                                                │
-                                          (score < 0.3)
-                                                │
-                                         no_context_fallback → END
+guardrails_agent
+    │
+    ├── (reject) → reject_query → END
+    │
+    └── (pass) → query_rewriter → retrieval_strategist → retriever → reranker
+                                                                    │
+                                                              (score < 0.3)
+                                                                    │
+                                                              no_context_fallback
+                                                                    │
+                                                              quality_reviewer_agent
+                                                                    │
+                    ┌── (score < 6 & retries < 3) ──────────┐      │
+                    ▼                                        │      │
+          answer_generation ←────────────────────────────────┘      │
+                    │                                              │
+                    └── (pass) → citation_formatter → END
 ```
 
 ---
@@ -181,7 +212,7 @@ services:
 ## 8. What's Working ✅
 
 - PDF ingestion (parse → paragraph chunk → embed → Qdrant upsert)
-- Multi-agent LangGraph pipeline (rewrite → retrieve → rerank → generate → cite)
+- 4-agent LangGraph pipeline (guardrails → rewrite → strategist → retrieve → rerank → generate → quality review → cite + quality regeneration loop)
 - Conditional edge hallucination guard
 - Streaming via SSE
 - 7 passing pytest tests

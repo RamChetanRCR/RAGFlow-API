@@ -74,8 +74,14 @@ async def query(body: QueryRequest):
         "reranked_chunks": [],
         "answer": "",
         "citations": [],
-        "should_retrieve": True,
         "doc_id": body.doc_id or "",
+        "should_retrieve": True,
+        "guardrails_passed": True,
+        "guardrails_reason": "",
+        "retrieval_strategy": "semantic",
+        "quality_score": 0,
+        "quality_passed": True,
+        "max_retries": 0,
     }
 
     result = await rag_graph.ainvoke(state)
@@ -121,8 +127,14 @@ async def query_stream(query: str, doc_id: str = ""):
         "reranked_chunks": reranked,
         "answer": "",
         "citations": [],
-        "should_retrieve": True,
         "doc_id": doc_id,
+        "should_retrieve": True,
+        "guardrails_passed": True,
+        "guardrails_reason": "",
+        "retrieval_strategy": "semantic",
+        "quality_score": 0,
+        "quality_passed": True,
+        "max_retries": 0,
     }
 
     return StreamingResponse(

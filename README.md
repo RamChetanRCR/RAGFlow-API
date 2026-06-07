@@ -1,6 +1,6 @@
-# RAGFlow — Multi-Agent RAG Pipeline
+# RAGFlow — LangGraph RAG Pipeline
 
-A production-grade, multi-agent RAG (Retrieval-Augmented Generation) pipeline built as a FastAPI microservice. Ingests PDF documents and answers natural-language queries with cited, grounded responses using a LangGraph-based multi-agent pipeline.
+A production-grade RAG (Retrieval-Augmented Generation) pipeline built as a FastAPI microservice. Ingests PDF documents and answers natural-language queries with cited, grounded responses using a LangGraph StateGraph.
 
 ## Architecture
 
@@ -140,9 +140,9 @@ ragflow-api/
 └── README.md
 ```
 
-## LangGraph Pipeline Details
+## LangGraph Pipeline (Multi-Node, Not Multi-Agent)
 
-The core pipeline uses `langgraph.graph.StateGraph` with 5 nodes:
+The core pipeline uses `langgraph.graph.StateGraph` with 5 deterministic nodes. Each node is a fixed function — **not** an autonomous agent with tools/reasoning loops. True multi-agent systems (like chat-langchain's `create_agent`) give each agent its own tools, middleware, and decision-making capability.
 
 1. **query_rewriter** — LLM rewrites ambiguous queries for better retrieval
 2. **retriever** — Qdrant semantic search (configurable top-k)
