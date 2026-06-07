@@ -142,7 +142,7 @@ ragflow-api/
 
 ## LangGraph Pipeline (Multi-Node, Not Multi-Agent)
 
-The core pipeline uses `langgraph.graph.StateGraph` with 5 deterministic nodes. Each node is a fixed function — **not** an autonomous agent with tools/reasoning loops. True multi-agent systems (like chat-langchain's `create_agent`) give each agent its own tools, middleware, and decision-making capability.
+The core pipeline uses `langgraph.graph.StateGraph` with 5 deterministic nodes. Each node is a fixed function — **not** an autonomous agent with tools/reasoning loops. True multi-agent systems give each agent its own tools, middleware, and decision-making capability.
 
 1. **query_rewriter** — LLM rewrites ambiguous queries for better retrieval
 2. **retriever** — ChromaDB semantic search (configurable top-k)
