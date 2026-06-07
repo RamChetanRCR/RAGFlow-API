@@ -180,7 +180,7 @@ class Ingestor:
 
     def check_health(self) -> bool:
         try:
-            self.collection.count()
+            self.collection
             return True
         except Exception:
             return False

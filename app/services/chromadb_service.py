@@ -1,5 +1,6 @@
 import chromadb
 from chromadb.config import Settings
+from chromadb.errors import NotFoundError
 
 _chroma_instance = None
 
@@ -26,7 +27,7 @@ def get_or_create_collection():
     settings = get_settings()
     try:
         return client.get_collection(settings.chroma_collection_name)
-    except ValueError:
+    except NotFoundError:
         return client.create_collection(
             name=settings.chroma_collection_name,
             metadata={"hnsw:space": "cosine"},
