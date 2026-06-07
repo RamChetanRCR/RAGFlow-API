@@ -1,9 +1,8 @@
-from qdrant_client import models
 from openai import OpenAI
 
 from app.config import get_settings
 from app.models import Chunk
-from app.services.qdrant import get_qdrant
+from app.services.chromadb_service import get_or_create_collection
 
 
 class Retriever:
@@ -12,8 +11,8 @@ class Retriever:
         self._embedding_client = None
 
     @property
-    def qdrant(self):
-        return get_qdrant()
+    def collection(self):
+        return get_or_create_collection()
 
     @property
     def embedding_client(self):
@@ -35,35 +34,28 @@ class Retriever:
         if top_k == 0:
             top_k = self.settings.top_k_retrieve
         query_vector = self.embed_query(query)
-        filter_condition = None
-        if doc_id:
-            filter_condition = models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="doc_id",
-                        match=models.MatchValue(value=doc_id),
-                    )
-                ],
-            )
+        where_filter = {"doc_id": doc_id} if doc_id else None
 
-        results = self.qdrant.query_points(
-            collection_name=self.settings.collection_name,
-            query=query_vector,
-            limit=top_k,
-            query_filter=filter_condition,
-            with_payload=True,
+        results = self.collection.query(
+            query_embeddings=[query_vector],
+            n_results=top_k,
+            where=where_filter,
+            include=["metadatas", "distances"],
         )
 
         chunks = []
-        for r in results.points:
+        for i in range(len(results["ids"][0])):
+            meta = results["metadatas"][0][i]
+            distance = results["distances"][0][i]
+            score = 1.0 - distance
             chunk = Chunk(
-                doc_id=r.payload.get("doc_id", ""),
-                page_number=r.payload.get("page_number", 0),
-                chunk_index=r.payload.get("chunk_index", 0),
-                char_offset=r.payload.get("char_offset", 0),
-                text=r.payload.get("text", ""),
-                section_header=r.payload.get("section_header", ""),
-                score=r.score,
+                doc_id=meta.get("doc_id", ""),
+                page_number=meta.get("page_number", 0),
+                chunk_index=meta.get("chunk_index", 0),
+                char_offset=meta.get("char_offset", 0),
+                text=meta.get("text", ""),
+                section_header=meta.get("section_header", ""),
+                score=score,
             )
             chunks.append(chunk)
 

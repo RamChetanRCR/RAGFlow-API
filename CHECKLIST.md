@@ -24,7 +24,7 @@ A production-grade multi-agent RAG pipeline built as a FastAPI microservice. Int
 | Pipeline Framework | LangGraph | ✅ LangGraph StateGraph with **4 autonomous agents** + conditional edges + quality loop |
 | LLM | Gemini 1.5 Flash | ✅ **Ollama** (llama3.2:3b) — swappable to Gemini/OpenAI via .env |
 | Embeddings | text-embedding-004 | ✅ **Ollama nomic-embed-text** (768d) — swappable to Gemini |
-| Vector DB | Qdrant (Docker) | ✅ **In-memory** (`:memory:`) by default, Docker optional |
+| Vector DB | Qdrant (Docker) | ✅ **ChromaDB** (`:memory:` or persistent, in-process) |
 | Reranking | Cohere Rerank | ✅ **Optional** — works with Cohere key, falls back to cosine similarity |
 | API Framework | FastAPI + Uvicorn | ✅ FastAPI + Uvicorn |
 | PDF Parsing | PyMuPDF (fitz) | ✅ PyMuPDF |
@@ -76,7 +76,7 @@ class RAGState(TypedDict):
 | 0a. reject_query | Returns policy message for off-topic | ✅ |
 | 1. query_rewriter | Rewrites ambiguous queries using LLM | ✅ |
 | 1a. retrieval_strategist | LLM picks retrieval strategy | ✅ |
-| 2. retriever | Qdrant semantic search (top-k=20) with metadata filter | ✅ |
+| 2. retriever | ChromaDB semantic search (top-k=20) with metadata filter | ✅ |
 | 3. reranker | Cohere Rerank top-20→top-5 (falls back to cosine) | ✅ |
 | 4. answer_generation | LLM generates grounded answer with inline citations | ✅ |
 | 5. quality_reviewer_agent | LLM scores answer, gates quality | ✅ |
@@ -111,7 +111,7 @@ guardrails_agent
 
 | Method | Path | Description | Status |
 |--------|------|-------------|--------|
-| GET | `/health` | API version, Qdrant status, LLM check | ✅ |
+| GET | `/health` | API version, ChromaDB status, LLM check | ✅ |
 | POST | `/ingest` | Upload PDF → parse → chunk → embed → store | ✅ |
 | POST | `/query` | Full pipeline: rewrite → retrieve → rerank → generate → cite | ✅ |
 | GET | `/query/stream` | SSE streaming version of POST /query | ✅ |
@@ -130,15 +130,15 @@ guardrails_agent
 - ✅ Metadata per chunk: `doc_id`, `page_number`, `chunk_index`, `section_header`
 - ⚠️ Section header detection: basic (detects bold/large text in PyMuPDF)
 
-### Qdrant Collection
+### ChromaDB Collection
 ```python
 client.create_collection(
-    collection_name='documents',
-    vectors_config=VectorParams(size=768, distance=Distance.COSINE),
+    name='documents',
+    metadata={"hnsw:space": "cosine"},
 )
 ```
-- ✅ Supports `:memory:` mode (local dev) and remote server (Docker)
-- ✅ Shared singleton ensures Ingestor and Retriever use same in-memory instance
+- ✅ Supports `:memory:` mode (local dev) and persistent directory (production)
+- ✅ Shared singleton ensures Ingestor and Retriever use same instance
 
 ### Streaming Response
 ```python
@@ -170,9 +170,9 @@ ragflow-api/
 │   │   └── state.py         # RAGState TypedDict
 │   ├── services/
 │   │   ├── ingestor.py      # PDF parsing + chunking + embedding + upsert
-│   │   ├── retriever.py     # Qdrant search wrapper
+│   │   ├── retriever.py     # ChromaDB search wrapper
 │   │   ├── reranker.py      # Cohere rerank wrapper
-│   │   └── qdrant.py        # Shared Qdrant singleton
+│   │   └── chromadb_service.py  # Shared ChromaDB singleton
 │   └── middleware/
 │       └── auth.py          # API key validation (removed for dev)
 ├── tests/
@@ -193,25 +193,21 @@ ragflow-api/
 
 ```yaml
 services:
-  qdrant:
-    image: qdrant/qdrant:latest
-    ports: ['6333:6333']
-    volumes: ['./qdrant_storage:/qdrant/storage']
   api:
     build: .
     ports: ['8000:8000']
     env_file: .env
-    depends_on: [qdrant]
+    volumes: ['./chroma_storage:/app/chroma_storage']
 ```
 
 - ✅ Dockerfile + docker-compose.yml ready
-- ⚠️ Local dev uses `QDRANT_URL=:memory:` (no Docker needed)
+- ⚠️ ChromaDB runs in-process — no Docker service needed
 
 ---
 
 ## 8. What's Working ✅
 
-- PDF ingestion (parse → paragraph chunk → embed → Qdrant upsert)
+- PDF ingestion (parse → paragraph chunk → embed → ChromaDB upsert)
 - 4-agent LangGraph pipeline (guardrails → rewrite → strategist → retrieve → rerank → generate → quality review → cite + quality regeneration loop)
 - Conditional edge hallucination guard
 - Streaming via SSE
@@ -259,8 +255,8 @@ GEMINI_API_KEY=
 # Optional Cohere Rerank
 COHERE_API_KEY=
 
-# Qdrant (:memory: for local, URL for Docker)
-QDRANT_URL=:memory:
+# ChromaDB (:memory: for ephemeral, path for persistent)
+CHROMA_PERSIST_DIRECTORY=:memory:
 
 # Pipeline Settings
 TOP_K_RETRIEVE=20

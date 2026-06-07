@@ -52,9 +52,9 @@ async def about():
 
 @app.get("/health", response_model=HealthResponse)
 async def health():
-    qdrant_ok = ingestor.check_health()
+    chroma_ok = ingestor.check_health()
     return HealthResponse(
-        qdrant_status="ok" if qdrant_ok else "unreachable",
+        chroma_status="ok" if chroma_ok else "unreachable",
         llm_status="configured" if settings.llm_base_url else "missing config",
     )
 

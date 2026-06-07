@@ -26,7 +26,7 @@ User Query
 └────────┬─────────────────────┘
          ▼
 ┌─────────────────┐
-│    Retriever     │  Qdrant semantic search (top-20)
+│    Retriever     │  ChromaDB semantic search (top-20)
 └────────┬────────┘
          ▼
 ┌─────────────────┐
@@ -73,7 +73,7 @@ User Query
 | Agent Framework | **LangGraph** (StateGraph with conditional edges & loops) |
 | LLM | Ollama (`llama3.2:3b` via OpenAI-compatible API) |
 | Embeddings | Ollama (`nomic-embed-text`, 768d) |
-| Vector DB | Qdrant (`:memory:` mode, shared singleton) |
+| Vector DB | ChromaDB (`:memory:` or persistent, shared singleton) |
 | Reranking | Cohere Rerank (free tier) |
 | API | FastAPI + Uvicorn |
 | PDF Parsing | PyMuPDF (fitz) |
@@ -91,7 +91,7 @@ User Query
 
 4. **Ollama local**: `llama3.2:3b` for LLM, `nomic-embed-text` for embeddings. Swapped from Gemini due to free-tier rate limits.
 
-5. **Qdrant `:memory:`**: No Docker needed for vector store. Shared singleton means Ingestor and Retriever use same instance.
+5. **ChromaDB**: Runs in-process (no Docker needed). Shared singleton means Ingestor and Retriever use same instance. Use `:memory:` for ephemeral or a directory path for persistence.
 
 6. **Conditional edges**: Relevance < 0.3 → no_context_fallback instead of hallucinating. Quality < 6 → regenerate loop.
 
@@ -123,10 +123,10 @@ ragflow-api/
 │   │   ├── nodes.py         # Agent functions + pipeline nodes
 │   │   └── state.py         # RAGState TypedDict
 │   ├── services/
-│   │   ├── ingestor.py      # PDF → chunk → embed → Qdrant
-│   │   ├── retriever.py     # Qdrant query_points wrapper
+│   │   ├── ingestor.py      # PDF → chunk → embed → ChromaDB
+│   │   ├── retriever.py     # ChromaDB query wrapper
 │   │   ├── reranker.py      # Cohere rerank wrapper
-│   │   └── qdrant.py        # Shared Qdrant singleton
+│   │   └── chromadb_service.py  # Shared ChromaDB singleton
 │   └── middleware/
 │       └── auth.py          # (removed for local dev)
 ├── tests/

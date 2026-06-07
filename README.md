@@ -5,7 +5,7 @@ A production-grade RAG (Retrieval-Augmented Generation) pipeline built as a Fast
 ## Architecture
 
 ```
-User Query → Query Rewriter → Retriever (Qdrant) → Reranker (Cohere) → Answer Generator → Citation Formatter → Response
+User Query → Query Rewriter → Retriever (ChromaDB) → Reranker (Cohere) → Answer Generator → Citation Formatter → Response
                                                                                 │
                                                                           No Context?
                                                                                 │
@@ -22,7 +22,7 @@ Built with **LangGraph StateGraph** — 5 connected nodes with conditional edges
 | Agent Framework | LangGraph (StateGraph) |
 | LLM | Ollama (local) / Gemini / OpenAI |
 | Embeddings | Ollama nomic-embed-text / Gemini |
-| Vector DB | Qdrant (in-memory or Docker) |
+| Vector DB | ChromaDB (in-memory or persistent) |
 | Reranking | Cohere Rerank (optional fallback) |
 | API | FastAPI + Uvicorn |
 | PDF Parsing | PyMuPDF (fitz) |
@@ -52,7 +52,7 @@ pip install -r requirements.txt
 
 # Environment
 cp .env.example .env
-# Edit .env as needed (defaults work with Ollama + in-memory Qdrant)
+# Edit .env as needed (defaults work with Ollama + in-memory ChromaDB)
 ```
 
 ### Run Backend
@@ -93,7 +93,7 @@ npm run dev
 # Opens at http://localhost:3000
 ```
 
-### Docker (with Qdrant server)
+### Docker (with persistent storage)
 
 ```bash
 docker-compose up --build
@@ -103,7 +103,7 @@ docker-compose up --build
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health` | API version, Qdrant status, LLM check |
+| GET | `/health` | API version, ChromaDB status, LLM check |
 | POST | `/ingest` | Upload PDF → parse → chunk → embed → store |
 | POST | `/query` | Full pipeline: rewrite → retrieve → rerank → generate → cite |
 | GET | `/query/stream` | SSE streaming version |
@@ -125,9 +125,9 @@ ragflow-api/
 │   │   └── state.py         # RAGState TypedDict
 │   ├── services/
 │   │   ├── ingestor.py      # PDF parsing → chunking → embed → upsert
-│   │   ├── retriever.py     # Qdrant search wrapper
+│   │   ├── retriever.py     # ChromaDB search wrapper
 │   │   ├── reranker.py      # Cohere rerank wrapper
-│   │   └── qdrant.py        # Shared Qdrant singleton
+│   │   └── chromadb_service.py  # Shared ChromaDB singleton
 │   └── middleware/
 │       └── auth.py          # API key validation
 ├── frontend/                # Next.js chat UI
@@ -145,7 +145,7 @@ ragflow-api/
 The core pipeline uses `langgraph.graph.StateGraph` with 5 deterministic nodes. Each node is a fixed function — **not** an autonomous agent with tools/reasoning loops. True multi-agent systems (like chat-langchain's `create_agent`) give each agent its own tools, middleware, and decision-making capability.
 
 1. **query_rewriter** — LLM rewrites ambiguous queries for better retrieval
-2. **retriever** — Qdrant semantic search (configurable top-k)
+2. **retriever** — ChromaDB semantic search (configurable top-k)
 3. **reranker** — Cohere rerank (or falls back to raw scores)
 4. **answer_generation** — LLM generates answer from context with citations
 5. **citation_formatter** — Extracts `[doc_name, p.N]` citations from output
@@ -162,7 +162,7 @@ Copy `.env.example` to `.env` and configure:
 | `LLM_MODEL` | `llama3.2:3b` | LLM model |
 | `EMBEDDING_BASE_URL` | `http://localhost:11434/v1` | Embedding endpoint |
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model |
-| `QDRANT_URL` | `:memory:` | Qdrant (use URL for server) |
+| `CHROMA_PERSIST_DIRECTORY` | `:memory:` | ChromaDB (path for persistent) |
 | `API_KEY` | `changeme` | Auth header key |
 | `COHERE_API_KEY` | — | Optional reranker |
 | `TOP_K_RETRIEVE` | 20 | Retrieved chunks |

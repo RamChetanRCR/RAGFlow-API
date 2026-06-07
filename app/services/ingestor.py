@@ -3,12 +3,11 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import fitz
-from qdrant_client.http import models as qmodels
 from openai import OpenAI
 
 from app.config import get_settings
 from app.models import Chunk
-from app.services.qdrant import get_qdrant
+from app.services.chromadb_service import get_or_create_collection
 
 
 class Ingestor:
@@ -17,8 +16,8 @@ class Ingestor:
         self._embedding_client = None
 
     @property
-    def qdrant(self):
-        return get_qdrant()
+    def collection(self):
+        return get_or_create_collection()
 
     @property
     def embedding_client(self):
@@ -28,18 +27,6 @@ class Ingestor:
                 api_key=self.settings.gemini_api_key or "no-key-set",
             )
         return self._embedding_client
-
-    def ensure_collection(self):
-        collections = self.qdrant.get_collections().collections
-        exists = any(c.name == self.settings.collection_name for c in collections)
-        if not exists:
-            self.qdrant.create_collection(
-                collection_name=self.settings.collection_name,
-                vectors_config=qmodels.VectorParams(
-                    size=self.settings.embedding_size,
-                    distance=qmodels.Distance.COSINE,
-                ),
-            )
 
     def parse_pdf(self, filepath: str) -> tuple[list[dict], int]:
         doc = fitz.open(filepath)
@@ -98,11 +85,12 @@ class Ingestor:
         return [item.embedding for item in response.data]
 
     def ingest(self, filepath: str, filename: str) -> dict:
-        self.ensure_collection()
         doc_id = str(uuid.uuid4())
         pages, page_count = self.parse_pdf(filepath)
-        points = []
         chunk_count = 0
+        all_ids = []
+        all_embeddings = []
+        all_metadatas = []
 
         for page in pages:
             raw_chunks = self.chunk_text(
@@ -124,24 +112,23 @@ class Ingestor:
             if chunk_texts:
                 embeddings = self.embed_texts([c.text for c in chunk_texts])
                 for chunk, embedding in zip(chunk_texts, embeddings):
-                    points.append(qmodels.PointStruct(
-                        id=chunk_count,
-                        vector=embedding,
-                        payload={
-                            "doc_id": chunk.doc_id,
-                            "page_number": chunk.page_number,
-                            "chunk_index": chunk.chunk_index,
-                            "text": chunk.text,
-                            "section_header": chunk.section_header,
-                            "filename": filename,
-                        },
-                    ))
+                    all_ids.append(str(chunk_count))
+                    all_embeddings.append(embedding)
+                    all_metadatas.append({
+                        "doc_id": chunk.doc_id,
+                        "page_number": chunk.page_number,
+                        "chunk_index": chunk.chunk_index,
+                        "text": chunk.text,
+                        "section_header": chunk.section_header,
+                        "filename": filename,
+                    })
                     chunk_count += 1
 
-        if points:
-            self.qdrant.upsert(
-                collection_name=self.settings.collection_name,
-                points=points,
+        if all_ids:
+            self.collection.add(
+                embeddings=all_embeddings,
+                metadatas=all_metadatas,
+                ids=all_ids,
             )
 
         return {
@@ -153,85 +140,47 @@ class Ingestor:
         }
 
     def get_doc_info(self, doc_id: str) -> Optional[dict]:
-        response = self.qdrant.scroll(
-            collection_name=self.settings.collection_name,
-            scroll_filter=qmodels.Filter(
-                must=[
-                    qmodels.FieldCondition(
-                        key="doc_id",
-                        match=qmodels.MatchValue(value=doc_id),
-                    )
-                ],
-            ),
-            limit=1,
-        )
-        if not response[0]:
+        try:
+            results = self.collection.get(where={"doc_id": doc_id})
+        except ValueError:
             return None
-        payload = response[0][0].payload
-        all_points = self.qdrant.scroll(
-            collection_name=self.settings.collection_name,
-            scroll_filter=qmodels.Filter(
-                must=[qmodels.FieldCondition(
-                    key="doc_id",
-                    match=qmodels.MatchValue(value=doc_id),
-                )],
-            ),
-            limit=10000,
-        )[0]
-        page_numbers = set(p.payload.get("page_number") for p in all_points)
+        if not results["ids"]:
+            return None
+        page_numbers = set(m.get("page_number") for m in results["metadatas"])
+        filename = results["metadatas"][0].get("filename", "")
         return {
             "doc_id": doc_id,
-            "filename": payload.get("filename", ""),
+            "filename": filename,
             "page_count": len(page_numbers),
             "ingestion_timestamp": "",
-            "chunk_count": self.qdrant.count(
-                collection_name=self.settings.collection_name,
-                count_filter=qmodels.Filter(
-                    must=[qmodels.FieldCondition(
-                        key="doc_id",
-                        match=qmodels.MatchValue(value=doc_id),
-                    )],
-                ),
-            ).count,
+            "chunk_count": len(results["ids"]),
         }
 
     def list_docs(self) -> list[dict]:
-        response = self.qdrant.scroll(
-            collection_name=self.settings.collection_name,
-            limit=10000,
-            with_payload=["doc_id", "filename"],
-            with_vectors=False,
-        )
+        try:
+            results = self.collection.get(limit=10000)
+        except ValueError:
+            return []
         seen = {}
-        for point in response[0]:
-            pid = point.payload.get("doc_id")
+        for meta in results["metadatas"]:
+            pid = meta.get("doc_id")
             if pid and pid not in seen:
                 seen[pid] = {
                     "doc_id": pid,
-                    "filename": point.payload.get("filename", ""),
+                    "filename": meta.get("filename", ""),
                 }
         return list(seen.values())
 
     def delete_doc(self, doc_id: str) -> bool:
         try:
-            self.qdrant.delete(
-                collection_name=self.settings.collection_name,
-                points_selector=qmodels.FilterSelector(
-                    filter=qmodels.Filter(
-                        must=[qmodels.FieldCondition(
-                            key="doc_id",
-                            match=qmodels.MatchValue(value=doc_id),
-                        )],
-                    ),
-                ),
-            )
+            self.collection.delete(where={"doc_id": doc_id})
             return True
         except Exception:
             return False
 
     def check_health(self) -> bool:
         try:
-            self.qdrant.get_collections()
+            self.collection.count()
             return True
         except Exception:
             return False

@@ -49,7 +49,7 @@ class DocInfo(BaseModel):
 
 class HealthResponse(BaseModel):
     version: str = "1.0.0"
-    qdrant_status: str = ""
+    chroma_status: str = ""
     llm_status: str = ""
 
 
@@ -59,7 +59,7 @@ class AboutResponse(BaseModel):
     version: str = "1.0.0"
     llm_model: str = ""
     embedding_model: str = ""
-    vector_db: str = "Qdrant (:memory:)"
+    vector_db: str = "ChromaDB (:memory:)"
     reranker: str = "Cohere (optional, falls back to cosine)"
     agent_count: int = 4
     agents: list[str] = [
