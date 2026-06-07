@@ -51,3 +51,21 @@ class HealthResponse(BaseModel):
     version: str = "1.0.0"
     qdrant_status: str = ""
     llm_status: str = ""
+
+
+class AboutResponse(BaseModel):
+    project: str = "RAGFlow API"
+    description: str = "Multi-agent RAG pipeline for PDF Q&A with LangGraph"
+    version: str = "1.0.0"
+    llm_model: str = ""
+    embedding_model: str = ""
+    vector_db: str = "Qdrant (:memory:)"
+    reranker: str = "Cohere (optional, falls back to cosine)"
+    agent_count: int = 4
+    agents: list[str] = [
+        "Guardrails Agent",
+        "Query Rewriter",
+        "Retrieval Strategist",
+        "Quality Reviewer",
+    ]
+    docs_count: int = 0

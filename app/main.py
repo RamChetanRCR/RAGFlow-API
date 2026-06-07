@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.models import QueryRequest, QueryResponse, IngestResponse, DocInfo, HealthResponse
+from app.models import QueryRequest, QueryResponse, IngestResponse, DocInfo, HealthResponse, AboutResponse
 from app.pipeline.graph import rag_graph
 from app.pipeline.nodes import answer_generator
 from app.services.ingestor import Ingestor
@@ -34,6 +34,20 @@ app = FastAPI(
 )
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+@app.get("/about", response_model=AboutResponse)
+async def about():
+    try:
+        docs = ingestor.list_docs()
+        docs_count = len(docs)
+    except ValueError:
+        docs_count = 0
+    return AboutResponse(
+        llm_model=settings.llm_model,
+        embedding_model=settings.embedding_model,
+        docs_count=docs_count,
+    )
 
 
 @app.get("/health", response_model=HealthResponse)
